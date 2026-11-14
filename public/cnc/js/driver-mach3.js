@@ -259,7 +259,7 @@ CNCApp.Mach3BridgeDriver = {
     var payload = {
       gcode: gcodeText,
       gcodeHash: gHash,
-      filename: (meta && meta.projectName) ? meta.projectName : 'active_job.tap',
+      filename: (meta && meta.projectName) ? meta.projectName : 'job.tap',
       valveOpenCmd: cfg.valveOpenCmd,
       valveCloseCmd: cfg.valveCloseCmd,
       dispensers: cfg.dispensers

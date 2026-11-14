@@ -49,6 +49,12 @@
     - Исчистени се старите `Mach3Bridge.cpp`, `Build_Mach3Bridge.bat`, `README_BRIDGE.txt` и `Start_CNC_Dispenser.bat`.
     - Додаден чист, оптимизиран C# код `bridge/bridge.cs` со `HttpListener`, безбедно изолирано читање на оските (`GetDRO`), детекција на движење и E-Stop (`IsMoving`, `GetOEMLED(800)`), и скрипта за компајлирање `bridge/compile1.bat` преку вградениот .NET Framework 4.0 `csc.exe /platform:x86`.
     - Ажуриран е автоматскиот ZIP пакет за USB (`CNC-Dispenser-V2.1.zip`) кој автоматски го вклучува вистинскиот бинарен `Mach3Bridge.exe`, како и новите `bridge/bridge.cs`, `bridge/compile1.bat` и `bridge/fix.reg`.
+* **Верзија V2.1.4 — Ротирачки бафер против Mach3 заклучување датотеки (решен „Почни од тука“) & Нов бинарен мост:**
+  - **Ротирачки слотови против Mach3 заклучување датотеки (`SaveGcodeToSafeTempFile` во `bridge.cs`):**
+    - Претходно користената статична датотека `active_job.tap` остануваше отворена/заклучена од процесот на `Mach3.exe`, што при брз повторен клик или при активирање на „📍 Почни од тука“ предизвикуваше `System.IO.IOException: The process cannot access the file because it is being used by another process`.
+    - Имплементиран е безбеден ротирачки бафер од 10 слотови (`job_1.tap` .. `job_10.tap`, 8.3 Win32 формат). Доколку Mach3 моментално држи еден слот, бриџот автоматски го фаќа исклучокот и го запишува новиот G-код во следниот слободен слот, а Mach3 при вчитувањето на новиот фајл автоматски го ослободува претходниот. Сите исклучоци сега враќаат структуриран HTTP 400/500 JSON наместо насилно прекинување на TCP врската.
+  - **Компајлиран бинарен мост V2.1.4:**
+    - Вграден новокомпајлираниот `Mach3Bridge.exe` (V2.1.4, 40.4 KB, x86 .NET assembly) во главниот директориум директно до `index.html` и во фолдерот `bridge/`, вклучен во автоматскиот USB пакет `CNC-Dispenser-V2.1.4.zip` и подготвен за зачувување на GitHub.
 * **Верзија V2.1.3 — Двофазен старт со потврда/кеш, поправки во `bridge.cs` (`/mdi`, `/jog`) и постојан Машина Jog режим:**
   - **Двофазен старт & прескокнување на повторно праќање (`bridge.cs`, `driver-mach3.js`, `driver-simulator.js`, `machine-driver.js`):**
     - `bridge.cs` добива посебни рути `POST /load_gcode` (со `180ms` почетна пауза пред `IsLoading()`, без BOM и со потврда `loaded: true`) и `POST /run_loaded` (`DoOEMButton(1002)` Rewind + `DoOEMButton(1000)` Cycle Start).
@@ -60,7 +66,6 @@
   - **Поправен `/jog` и постојан „🕹️ Машина“ тастатурен режим (`bridge.cs`, `machine-driver.js`, `app.js`):**
     - Отстрането мешањето на `G91` и `G90` во ист ред во `bridge.cs` `/jog` (каде `G90` го прегазуваше `G91`); сега `/jog` чита живо `GetDRO` и извршува `G90 G0 {axis}{cur + step}`.
     - Режимот `keyboardJogMode` („🕹️ Машина“) останува вклучен сè додека корисникот рачно не кликне на „📌 Точки“.
-  - **Компајлиран бинарен мост:** Вграден нов компајлиран `Mach3Bridge.exe` (V2.1.3, 38.4 KB, x86 .NET assembly) во главниот директориум директно до `index.html` и во фолдерот `bridge/`, вклучен во автоматскиот USB пакет `CNC-Dispenser-V2.1.3.zip` и подготвен за зачувување на GitHub.
 * **Верзија V2.1.2 — M10/M11 Output P3–P8, Унифициран микро-чекор на нов ред и синхронизирани рачни контроли:**
   - **Мапирање на Output P3–P8 без менување пинови во Mach3 (`js/state.js`, `js/app.js`, `index.html`, `bridge/bridge.cs`):**
     - Вентил поставен на `M11 P3` / `M10 P3` (Output 3, Pin 8), а Диспензери 1–5 на `M11 P4..P8` / `M10 P4..P8` (Output 4–8, Pins 2, 3, 9, 14, 17).

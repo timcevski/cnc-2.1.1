@@ -7,6 +7,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Globalization;
+using System.Threading;
 
 class Mach3Bridge
 {
@@ -23,6 +24,7 @@ class Mach3Bridge
     static int totalLines = 0;
     static string loadedGcodeHash = "";
     static string loadedFileName = "";
+    static int gcodeFileSlot = 0;
     static string valveOpenCmd = "M11 P3";
     static string valveCloseCmd = "M10 P3";
     static Dictionary<int, string> dispenserLowerCmds = new Dictionary<int, string>();
@@ -316,6 +318,68 @@ class Mach3Bridge
         }
     }
 
+    static string SaveGcodeToSafeTempFile(string normalizedGcode, out string errMsg)
+    {
+        errMsg = null;
+        string tempDir = Path.GetTempPath();
+
+        // 10 ротирачки слотови: job_1.tap .. job_10.tap (8.3 формат, компатибилен со сите верзии на Mach3 и Windows).
+        // Доколку Mach3 моментално држи отворена претходна датотека (на пример job_1.tap),
+        // при обид за запишување се јавува IOException. Ние го фаќаме овој исклучок и автоматски
+        // преминуваме на следниот слободен слот, спречувајќи заклучување и за „Пушти активен таб“ и за „Почни од тука“.
+        for (int attempt = 0; attempt < 10; attempt++)
+        {
+            int slot = Interlocked.Increment(ref gcodeFileSlot);
+            if (slot > 1000000) gcodeFileSlot = 1;
+            int slotNum = ((slot - 1) % 10) + 1;
+            string candidate = Path.Combine(tempDir, string.Format(CultureInfo.InvariantCulture, "job_{0}.tap", slotNum));
+
+            try
+            {
+                using (var fs = new FileStream(candidate, FileMode.Create, FileAccess.Write, FileShare.ReadWrite))
+                using (var writer = new StreamWriter(fs, new UTF8Encoding(false)))
+                {
+                    writer.Write(normalizedGcode);
+                    writer.Flush();
+                }
+                return candidate;
+            }
+            catch (IOException ioEx)
+            {
+                LogWarning("[FILE] Датотеката " + Path.GetFileName(candidate) + " е моментално зафатена од Mach3, префрлање на следен слот (" + ioEx.Message + ")");
+                continue;
+            }
+            catch (Exception ex)
+            {
+                errMsg = "Грешка при запишување на привремена датотека " + Path.GetFileName(candidate) + ": " + ex.Message;
+                LogError("[FILE ГРЕШКА] " + errMsg);
+                return null;
+            }
+        }
+
+        // Резервна варијанта: уникатно име со датум/време
+        try
+        {
+            string guidFile = Path.Combine(tempDir, string.Format(CultureInfo.InvariantCulture, "job_{0}_{1}.tap",
+                DateTime.Now.ToString("HHmmss"),
+                Guid.NewGuid().ToString("N").Substring(0, 4)));
+
+            using (var fs = new FileStream(guidFile, FileMode.Create, FileAccess.Write, FileShare.ReadWrite))
+            using (var writer = new StreamWriter(fs, new UTF8Encoding(false)))
+            {
+                writer.Write(normalizedGcode);
+                writer.Flush();
+            }
+            return guidFile;
+        }
+        catch (Exception ex)
+        {
+            errMsg = "Сите слотови за привремена датотека беа блокирани од системот: " + ex.Message;
+            LogError("[FILE ГРЕШКА] " + errMsg);
+            return null;
+        }
+    }
+
     static bool LoadGcodeIntoMach3Locked(string gcode, string gcodeHash, out string errMsg)
     {
         errMsg = null;
@@ -330,49 +394,63 @@ class Mach3Bridge
             return false;
         }
 
-        string normalized = gcode.Replace("\r\n", "\n").Replace("\r", "\n").Replace("\n", "\r\n");
-        string tempFile = Path.Combine(Path.GetTempPath(), "active_job.tap");
-        File.WriteAllText(tempFile, normalized, new UTF8Encoding(false));
-
-        totalLines = normalized.Split(new char[] { '\n' }).Length;
-        loadedGcodeHash = "";
-        loadedFileName = tempFile;
-
-        scripter.LoadFile(tempFile);
-
-        // Кратка иницијална пауза за Mach3 да ја стартува нишката за вчитување пред IsLoading() проверката
-        System.Threading.Thread.Sleep(180);
-
-        int maxWaitMs = 15000;
-        int waited = 0;
-        while (Convert.ToInt32(scripter.IsLoading()) != 0 && waited < maxWaitMs)
-        {
-            System.Threading.Thread.Sleep(50);
-            waited += 50;
-        }
-
-        if (Convert.ToInt32(scripter.IsLoading()) != 0)
-        {
-            errMsg = "Истече времето при вчитување на G-кодот во Mach3.";
-            return false;
-        }
-
-        System.Threading.Thread.Sleep(120);
-
         try
         {
-            string machFile = Convert.ToString(mach.FileName);
-            if (!string.IsNullOrEmpty(machFile) &&
-                machFile.IndexOf("active_job.tap", StringComparison.OrdinalIgnoreCase) < 0)
+            string normalized = gcode.Replace("\r\n", "\n").Replace("\r", "\n").Replace("\n", "\r\n");
+            string tempFile = SaveGcodeToSafeTempFile(normalized, out errMsg);
+            if (string.IsNullOrEmpty(tempFile) || !File.Exists(tempFile))
             {
-                LogWarning("[LOAD] Mach3 FileName врати: " + machFile);
+                if (string.IsNullOrEmpty(errMsg)) errMsg = "Неуспешно креирање на безбедна привремена датотека за G-код.";
+                return false;
             }
-        }
-        catch { }
 
-        loadedGcodeHash = string.IsNullOrEmpty(gcodeHash) ? ("L" + totalLines) : gcodeHash;
-        LogSuccess("[LOAD] G-кодот е вчитан и потврден во Mach3 (" + totalLines + " реда).");
-        return true;
+            totalLines = normalized.Split(new char[] { '\n' }, StringSplitOptions.RemoveEmptyEntries).Length;
+            loadedGcodeHash = "";
+            loadedFileName = tempFile;
+
+            scripter.LoadFile(tempFile);
+
+            // Кратка иницијална пауза за Mach3 да ја стартува нишката за вчитување пред IsLoading() проверката
+            Thread.Sleep(180);
+
+            int maxWaitMs = 15000;
+            int waited = 0;
+            while (Convert.ToInt32(scripter.IsLoading()) != 0 && waited < maxWaitMs)
+            {
+                Thread.Sleep(50);
+                waited += 50;
+            }
+
+            if (Convert.ToInt32(scripter.IsLoading()) != 0)
+            {
+                errMsg = "Истече времето при вчитување на G-кодот во Mach3.";
+                return false;
+            }
+
+            Thread.Sleep(120);
+
+            try
+            {
+                string machFile = Convert.ToString(mach.FileName);
+                string expectedBaseName = Path.GetFileName(tempFile);
+                if (!string.IsNullOrEmpty(machFile) &&
+                    machFile.IndexOf(expectedBaseName, StringComparison.OrdinalIgnoreCase) < 0)
+                {
+                    LogWarning("[LOAD] Mach3 FileName врати: " + machFile + " (очекувано: " + expectedBaseName + ")");
+                }
+            }
+            catch { }
+
+            loadedGcodeHash = string.IsNullOrEmpty(gcodeHash) ? ("L" + totalLines) : gcodeHash;
+            LogSuccess("[LOAD] G-кодот е успешно вчитан во Mach3 (" + totalLines + " реда, датотека: " + Path.GetFileName(tempFile) + ").");
+            return true;
+        }
+        catch (Exception ex)
+        {
+            errMsg = "Грешка при вчитување во Mach3: " + ex.Message;
+            LogError("[LOAD ГРЕШКА] " + ex.Message);
+            return false;
+        }
     }
 
     static bool StartLoadedInMach3Locked(out string errMsg)
@@ -384,38 +462,47 @@ class Mach3Bridge
             return false;
         }
 
-        bool isReset = false;
-        try { isReset = Convert.ToInt32(scripter.GetOEMLED(800)) != 0; } catch { }
-        if (isReset)
+        try
         {
-            errMsg = "Mach3 е во Reset / E-STOP состојба! Прво притиснете Reset во Mach3 или 🔄 Reset во апликацијата.";
+            bool isReset = false;
+            try { isReset = Convert.ToInt32(scripter.GetOEMLED(800)) != 0; } catch { }
+            if (isReset)
+            {
+                errMsg = "Mach3 е во Reset / E-STOP состојба! Прво притиснете Reset во Mach3 или 🔄 Reset во апликацијата.";
+                return false;
+            }
+
+            if (totalLines <= 0 || string.IsNullOrEmpty(loadedFileName))
+            {
+                errMsg = "Во Mach3 нема вчитан G-код од апликацијата.";
+                return false;
+            }
+
+            bool isHold = false;
+            try { isHold = Convert.ToInt32(scripter.GetOEMLED(805)) != 0; } catch { }
+            if (!isHold)
+            {
+                scripter.DoOEMButton(1002); // Rewind на ред 0 пред старт
+                Thread.Sleep(100);
+            }
+
+            scripter.DoOEMButton(1000); // Cycle Start
+            Thread.Sleep(120);
+            LogSuccess("[RUN] Стартувано извршување во Mach3 (Cycle Start).");
+            return true;
+        }
+        catch (Exception ex)
+        {
+            errMsg = "Грешка при стартување на Mach3: " + ex.Message;
+            LogError("[RUN ГРЕШКА] " + ex.Message);
             return false;
         }
-
-        if (totalLines <= 0 || string.IsNullOrEmpty(loadedFileName))
-        {
-            errMsg = "Во Mach3 нема вчитан G-код од апликацијата.";
-            return false;
-        }
-
-        bool isHold = false;
-        try { isHold = Convert.ToInt32(scripter.GetOEMLED(805)) != 0; } catch { }
-        if (!isHold)
-        {
-            scripter.DoOEMButton(1002); // Rewind на ред 0 пред старт
-            System.Threading.Thread.Sleep(100);
-        }
-
-        scripter.DoOEMButton(1000); // Cycle Start
-        System.Threading.Thread.Sleep(120);
-        LogSuccess("[RUN] Стартувано извршување во Mach3 (Cycle Start).");
-        return true;
     }
 
     static void Main(string[] args)
     {
         Console.OutputEncoding = Encoding.UTF8;
-        Console.Title = "Mach3 Driver Bridge V2.1.3 (Port: " + PORT + ")";
+        Console.Title = "Mach3 Driver Bridge V2.1.4 (Port: " + PORT + ")";
         InitDefaultCmds();
 
         AppDomain.CurrentDomain.UnhandledException += (s, e) =>
@@ -426,7 +513,7 @@ class Mach3Bridge
 
         Console.ForegroundColor = ConsoleColor.Cyan;
         Console.WriteLine("===============================================================");
-        Console.WriteLine("       MACH3 ПОСВЕТЕН МОСТ ЗА CNC УРЕДУВАЧОТ (V2.1.3)          ");
+        Console.WriteLine("       MACH3 ПОСВЕТЕН МОСТ ЗА CNC УРЕДУВАЧОТ (V2.1.4)          ");
         Console.WriteLine("===============================================================");
         Console.ResetColor();
 
@@ -797,7 +884,14 @@ class Mach3Bridge
         catch (Exception ex)
         {
             LogError("[HTTP ГРЕШКА] " + ex.Message);
-            try { res.Close(); } catch { }
+            try
+            {
+                SendJson(res, BuildSnapshotJson(ex.Message, false), 500);
+            }
+            catch
+            {
+                try { res.Close(); } catch { }
+            }
         }
     }
 

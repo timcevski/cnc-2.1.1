@@ -91,7 +91,7 @@ export default function App() {
       const downloadUrl = URL.createObjectURL(blob);
       const tempLink = document.createElement('a');
       tempLink.href = downloadUrl;
-      tempLink.download = 'CNC-Dispenser-V2.1.3.zip';
+      tempLink.download = 'CNC-Dispenser-V2.1.4.zip';
       document.body.appendChild(tempLink);
       tempLink.click();
       document.body.removeChild(tempLink);
@@ -115,14 +115,14 @@ export default function App() {
             <div>
               <div className="flex items-center gap-2">
                 <h1 className="font-bold text-sm text-slate-100 tracking-wide">
-                  CNC Dispenser V2.1.3
+                  CNC Dispenser V2.1.4
                 </h1>
                 <span className="text-[11px] bg-emerald-500/20 text-emerald-300 font-semibold px-2 py-0.5 rounded border border-emerald-500/30">
-                  ⚡ V2.1.3 (Потврдено вчитување/кеш во Mach3, релативен Jog & рачни микро-чекори)
+                  ⚡ V2.1.4 (Ротирачки слотови job_1..10 против заклучување, кеш старт & релативен Jog)
                 </span>
               </div>
               <p className="text-[11px] text-slate-400">
-                <strong className="text-emerald-300">CNC Dispenser V2.1.3</strong>: 2-фазен старт со потврда и прескокнување на повторно вчитување при непроменета табела, директен +0.001/-0.001 микро-чекор и постојан Машина Jog режим.
+                <strong className="text-emerald-300">CNC Dispenser V2.1.4</strong>: 2-фазен старт со потврда/кеш, ротирачки слотови job_1..10 против заклучување во Mach3 (решен „Почни од тука“), директен ±0.001 микро-чекор и постојан Машина Jog режим.
               </p>
             </div>
           </div>
@@ -157,7 +157,7 @@ export default function App() {
               ) : (
                 <Download className="w-3.5 h-3.5" />
               )}
-              <span>{isDownloadingZip ? 'Се подготвува ZIP...' : 'Симни ZIP за USB (V2.1.3)'}</span>
+              <span>{isDownloadingZip ? 'Се подготвува ZIP...' : 'Симни ZIP за USB (V2.1.4)'}</span>
             </button>
 
             <button
@@ -186,7 +186,7 @@ export default function App() {
         <iframe
           ref={iframeRef}
           src="/cnc/index.html"
-          title="CNC Dispenser V2.1.3"
+          title="CNC Dispenser V2.1.4"
           className="w-full h-full border-0 block"
         />
       </main>
@@ -212,7 +212,7 @@ export default function App() {
               <p>
                 <strong>1. Апликацијата е 100% жива:</strong>
                 <br />
-                Она што го гледате на екранот е токму вашата апликација <em>CNC Dispenser V2.1.3</em>. Можете да вчитувате TXT, CSV, да влечете точки на графикот, да менувате параметри и да експортирате G-код (.tap).
+                Она што го гледате на екранот е токму вашата апликација <em>CNC Dispenser V2.1.4</em>. Можете да вчитувате TXT, CSV, да влечете точки на графикот, да менувате параметри и да експортирате G-код (.tap).
               </p>
 
               <p>
